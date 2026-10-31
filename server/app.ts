@@ -1,0 +1,213 @@
+import express from 'express';
+import dotenv from 'dotenv';
+import { storage } from './storage.js';
+import {
+  chatWithFinancialCoach,
+  parseUnstructuredTransactions,
+  generateScenarioEvaluation,
+  generateMonthlyReviewActionables,
+} from './gemini.js';
+import { ScenarioParameters, ScenarioResult } from '../src/types/finance.js';
+
+dotenv.config();
+
+const app = express();
+
+app.use(express.json({ limit: '10mb' }));
+
+// Health check endpoint
+app.get(['/', '/api', '/api/health'], (_req, res) => {
+  res.json({ status: 'ok', service: 'FINMATE AI Intelligence API', timestamp: new Date().toISOString() });
+});
+
+// Full State
+app.get(['/api/data', '/data'], (_req, res) => {
+  try {
+    const data = storage.getState();
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Profile / Living Money Model
+app.post(['/api/profile', '/profile'], (req, res) => {
+  try {
+    const updated = storage.updateProfile(req.body);
+    res.json({ success: true, profile: updated, metrics: storage.getState().metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add Single Transaction
+app.post(['/api/transactions', '/transactions'], (req, res) => {
+  try {
+    const tx = storage.addTransaction(req.body);
+    res.json({ success: true, transaction: tx, metrics: storage.getState().metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update Transaction (Category correction + Rule learning loop)
+app.put(['/api/transactions/:id', '/transactions/:id'], (req, res) => {
+  try {
+    const { updates, createLearningRule } = req.body;
+    const tx = storage.updateTransaction(req.params.id, updates, createLearningRule);
+    if (!tx) {
+      res.status(404).json({ error: 'Transaction not found' });
+      return;
+    }
+    const state = storage.getState();
+    res.json({ success: true, transaction: tx, rules: state.rules, metrics: state.metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete Transaction
+app.delete(['/api/transactions/:id', '/transactions/:id'], (req, res) => {
+  try {
+    const ok = storage.deleteTransaction(req.params.id);
+    res.json({ success: ok, metrics: storage.getState().metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Import Transactions Batch
+app.post(['/api/transactions/import', '/transactions/import'], (req, res) => {
+  try {
+    const { transactions, source } = req.body;
+    if (!Array.isArray(transactions)) {
+      res.status(400).json({ error: 'transactions array required' });
+      return;
+    }
+    const result = storage.importTransactions(transactions, source || 'csv');
+    res.json({
+      success: true,
+      ...result,
+      allTransactions: storage.getState().transactions,
+      metrics: storage.getState().metrics,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Categorization Rules
+app.post(['/api/rules', '/rules'], (req, res) => {
+  try {
+    const rule = storage.addRule(req.body);
+    res.json({ success: true, rule, allRules: storage.getState().rules, metrics: storage.getState().metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete(['/api/rules/:id', '/rules/:id'], (req, res) => {
+  try {
+    const ok = storage.deleteRule(req.params.id);
+    res.json({ success: ok, allRules: storage.getState().rules });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Recurring Commitments Actions
+app.post(['/api/recurring/:id/action', '/recurring/:id/action'], (req, res) => {
+  try {
+    const { action } = req.body;
+    const item = storage.updateRecurringAction(req.params.id, action);
+    if (!item) {
+      res.status(404).json({ error: 'Recurring commitment not found' });
+      return;
+    }
+    res.json({ success: true, recurring: item, allRecurring: storage.getState().recurring, metrics: storage.getState().metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Dismiss Nudge Alert
+app.post(['/api/nudges/:id/dismiss', '/nudges/:id/dismiss'], (req, res) => {
+  try {
+    const ok = storage.dismissNudge(req.params.id);
+    res.json({ success: ok, allNudges: storage.getState().nudges });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reset to Pristine Demo
+app.post(['/api/reset-data', '/reset-data'], (_req, res) => {
+  try {
+    const resetState = storage.resetToDefault();
+    res.json({ success: true, state: resetState });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Financial Coach Chat
+app.post(['/api/ai/coach', '/ai/coach'], async (req, res) => {
+  try {
+    const { message, history } = req.body;
+    if (!message) {
+      res.status(400).json({ error: 'Message is required' });
+      return;
+    }
+    const state = storage.getState();
+    const reply = await chatWithFinancialCoach(message, history || [], state);
+    res.json({ reply, metricsSnapshot: state.metrics });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Document & Unstructured Statement / SMS Parser
+app.post(['/api/ai/parse-statement', '/ai/parse-statement'], async (req, res) => {
+  try {
+    const { rawText, sourceType } = req.body;
+    if (!rawText) {
+      res.status(400).json({ error: 'rawText is required' });
+      return;
+    }
+    const parsed = await parseUnstructuredTransactions(rawText, sourceType || 'pdf_ocr');
+    res.json({ success: true, transactions: parsed });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Scenario Analysis
+app.post(['/api/ai/scenario-analysis', '/ai/scenario-analysis'], async (req, res) => {
+  try {
+    const { params, baseline, simulated, currency } = req.body as {
+      params: ScenarioParameters;
+      baseline: ScenarioResult['baseline'];
+      simulated: ScenarioResult['simulated'];
+      currency: string;
+    };
+    const result: ScenarioResult = { baseline, simulated };
+    const analysis = await generateScenarioEvaluation(params, result, currency || 'USD');
+    res.json({ success: true, analysis });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// AI Monthly Review
+app.post(['/api/ai/monthly-review', '/ai/monthly-review'], async (req, res) => {
+  try {
+    const { monthName } = req.body;
+    const state = storage.getState();
+    const actionables = await generateMonthlyReviewActionables(monthName || 'October 2026', state);
+    res.json({ success: true, actionables });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+export default app;

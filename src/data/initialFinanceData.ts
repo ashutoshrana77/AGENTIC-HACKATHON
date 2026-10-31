@@ -1,0 +1,736 @@
+import {
+  FinancialState,
+  CalculatedFinancialMetrics,
+  LivingMoneyModel,
+  Transaction,
+  RecurringCommitment,
+  CategorizationRule,
+  NudgeAlert,
+} from '../types/finance.js';
+
+export const INITIAL_PROFILE: LivingMoneyModel = {
+  currency: 'USD',
+  userName: 'Alex Morgan',
+  userRole: 'Senior UX Designer',
+  monthlyGrossIncome: 8750,
+  monthlyNetIncome: 7150,
+  incomeVariability: 'stable',
+  incomeSources: [
+    {
+      id: 'inc-1',
+      name: 'Primary Tech Salary',
+      amount: 6200,
+      frequency: 'monthly',
+      type: 'salary',
+    },
+    {
+      id: 'inc-2',
+      name: 'Design Advisory & Consulting',
+      amount: 950,
+      frequency: 'monthly',
+      type: 'freelance',
+    },
+  ],
+  emergencyFund: {
+    currentBalance: 18500,
+    targetMonths: 6,
+    monthlyContribution: 500,
+  },
+  savingsGoals: [
+    {
+      id: 'goal-1',
+      title: 'Full Emergency Runway (6 Mo)',
+      targetAmount: 22500,
+      currentAmount: 18500,
+      targetDate: '2027-04-30',
+      priority: 'high',
+      monthlyTarget: 500,
+      category: 'Safety',
+      isAutomated: true,
+    },
+    {
+      id: 'goal-2',
+      title: 'First Home Down Payment',
+      targetAmount: 60000,
+      currentAmount: 24500,
+      targetDate: '2028-12-31',
+      priority: 'high',
+      monthlyTarget: 850,
+      category: 'Real Estate',
+      isAutomated: true,
+    },
+    {
+      id: 'goal-3',
+      title: 'Japan Autumn Exploration',
+      targetAmount: 4800,
+      currentAmount: 2600,
+      targetDate: '2027-10-15',
+      priority: 'medium',
+      monthlyTarget: 220,
+      category: 'Travel',
+      isAutomated: false,
+    },
+  ],
+  debtCommitments: [
+    {
+      id: 'debt-1',
+      name: 'Undergrad Student Loan Refinance',
+      totalBalance: 13400,
+      interestRate: 4.2,
+      monthlyPayment: 320,
+      dueDate: '15th',
+    },
+    {
+      id: 'debt-2',
+      name: 'Honda Civic Auto Loan',
+      totalBalance: 8600,
+      interestRate: 3.8,
+      monthlyPayment: 290,
+      dueDate: '22nd',
+    },
+  ],
+  guardrails: {
+    essentialLimitPercent: 50,
+    discretionaryLimitPercent: 30,
+    savingsTargetPercent: 20,
+  },
+};
+
+export const INITIAL_RULES: CategorizationRule[] = [
+  {
+    id: 'rule-1',
+    pattern: 'Whole Foods',
+    matchField: 'merchant',
+    targetCategory: 'Food & Dining',
+    targetSpendingType: 'essential',
+    createdAt: '2026-09-01T10:00:00Z',
+    timesApplied: 14,
+    isUserDefined: false,
+  },
+  {
+    id: 'rule-2',
+    pattern: 'Sweetgreen',
+    matchField: 'merchant',
+    targetCategory: 'Food & Dining',
+    targetSpendingType: 'discretionary',
+    createdAt: '2026-09-05T12:00:00Z',
+    timesApplied: 8,
+    isUserDefined: true,
+  },
+  {
+    id: 'rule-3',
+    pattern: 'Lease Rent',
+    matchField: 'description',
+    targetCategory: 'Housing & Rent',
+    targetSpendingType: 'essential',
+    createdAt: '2026-08-01T09:00:00Z',
+    timesApplied: 3,
+    isUserDefined: false,
+  },
+  {
+    id: 'rule-4',
+    pattern: 'Uber',
+    matchField: 'merchant',
+    targetCategory: 'Transportation',
+    targetSpendingType: 'discretionary',
+    createdAt: '2026-09-12T14:00:00Z',
+    timesApplied: 9,
+    isUserDefined: true,
+  },
+  {
+    id: 'rule-5',
+    pattern: 'Subway Pass',
+    matchField: 'description',
+    targetCategory: 'Transportation',
+    targetSpendingType: 'essential',
+    createdAt: '2026-08-15T08:00:00Z',
+    timesApplied: 3,
+    isUserDefined: false,
+  },
+  {
+    id: 'rule-6',
+    pattern: 'Coursera',
+    matchField: 'merchant',
+    targetCategory: 'Education & Growth',
+    targetSpendingType: 'essential',
+    createdAt: '2026-09-18T18:00:00Z',
+    timesApplied: 2,
+    isUserDefined: true,
+  },
+];
+
+export const INITIAL_RECURRING: RecurringCommitment[] = [
+  {
+    id: 'rec-1',
+    name: 'Apartment Residential Lease',
+    merchant: 'Avalon Bay Communities',
+    amount: 2150,
+    frequency: 'monthly',
+    category: 'Housing & Rent',
+    spendingType: 'essential',
+    nextDueDate: '2026-11-01',
+    lastPaymentDate: '2026-10-01',
+    status: 'active',
+    account: 'Primary Checking ···4921',
+  },
+  {
+    id: 'rec-2',
+    name: 'Netflix Premium 4K',
+    merchant: 'Netflix Inc',
+    amount: 22.99,
+    previousAmount: 19.99,
+    frequency: 'monthly',
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    nextDueDate: '2026-11-08',
+    lastPaymentDate: '2026-10-08',
+    status: 'flagged_increase',
+    account: 'Preferred Sapphire ···3320',
+  },
+  {
+    id: 'rec-3',
+    name: 'Equinox Tier X Membership',
+    merchant: 'Equinox Fitness',
+    amount: 260.0,
+    frequency: 'monthly',
+    category: 'Health & Wellness',
+    spendingType: 'discretionary',
+    nextDueDate: '2026-11-12',
+    lastPaymentDate: '2026-10-12',
+    status: 'flagged_unused',
+    unusedEvidence: 'Zero facility badge entries detected in the last 45 days. Potential $3,120/year optimization.',
+    account: 'Primary Checking ···4921',
+  },
+  {
+    id: 'rec-4',
+    name: 'Spotify Premium Duo',
+    merchant: 'Spotify USA',
+    amount: 16.99,
+    frequency: 'monthly',
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    nextDueDate: '2026-11-18',
+    lastPaymentDate: '2026-10-18',
+    status: 'flagged_duplicate',
+    duplicateNotice: 'Redundant with active Apple Music subscription ($10.99/mo).',
+    account: 'Preferred Sapphire ···3320',
+  },
+  {
+    id: 'rec-5',
+    name: 'Apple Music Individual',
+    merchant: 'Apple Services',
+    amount: 10.99,
+    frequency: 'monthly',
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    nextDueDate: '2026-11-20',
+    lastPaymentDate: '2026-10-20',
+    status: 'flagged_duplicate',
+    duplicateNotice: 'Redundant with active Spotify Premium subscription ($16.99/mo).',
+    account: 'Preferred Sapphire ···3320',
+  },
+  {
+    id: 'rec-6',
+    name: 'AWS Cloud Hosting & Backup',
+    merchant: 'Amazon Web Services',
+    amount: 44.5,
+    frequency: 'monthly',
+    category: 'Utilities & Bills',
+    spendingType: 'essential',
+    nextDueDate: '2026-11-03',
+    lastPaymentDate: '2026-10-03',
+    status: 'active',
+    account: 'Preferred Sapphire ···3320',
+  },
+  {
+    id: 'rec-7',
+    name: 'ChatGPT Plus Intelligence',
+    merchant: 'OpenAI',
+    amount: 20.0,
+    frequency: 'monthly',
+    category: 'Education & Growth',
+    spendingType: 'essential',
+    nextDueDate: '2026-11-14',
+    lastPaymentDate: '2026-10-14',
+    status: 'active',
+    account: 'Preferred Sapphire ···3320',
+  },
+  {
+    id: 'rec-8',
+    name: 'ConEdison Electric & Gas',
+    merchant: 'ConEdison Utilities',
+    amount: 142.3,
+    frequency: 'monthly',
+    category: 'Utilities & Bills',
+    spendingType: 'essential',
+    nextDueDate: '2026-11-25',
+    lastPaymentDate: '2026-10-25',
+    status: 'active',
+    account: 'Primary Checking ···4921',
+  },
+  {
+    id: 'rec-9',
+    name: 'Verizon Fios Fiber 1Gbps',
+    merchant: 'Verizon Home',
+    amount: 79.99,
+    frequency: 'monthly',
+    category: 'Utilities & Bills',
+    spendingType: 'essential',
+    nextDueDate: '2026-11-28',
+    lastPaymentDate: '2026-10-28',
+    status: 'active',
+    account: 'Primary Checking ···4921',
+  },
+];
+
+export const INITIAL_TRANSACTIONS: Transaction[] = [
+  {
+    id: 'tx-01',
+    date: '2026-10-31',
+    description: 'Whole Foods Market Union Sq',
+    merchant: 'Whole Foods',
+    amount: -128.45,
+    category: 'Food & Dining',
+    spendingType: 'essential',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-02',
+    date: '2026-10-30',
+    description: 'Bi-Weekly Tech Corp Direct Deposit',
+    merchant: 'TechCorp Global Payroll',
+    amount: 3100.0,
+    category: 'Income',
+    spendingType: 'income',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'biweekly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-03',
+    date: '2026-10-29',
+    description: 'Sweetgreen Greenwich Village',
+    merchant: 'Sweetgreen',
+    amount: -19.85,
+    category: 'Food & Dining',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-04',
+    date: '2026-10-28',
+    description: 'ConEdison Direct Debit Utility',
+    merchant: 'ConEdison Utilities',
+    amount: -142.3,
+    category: 'Utilities & Bills',
+    spendingType: 'essential',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-05',
+    date: '2026-10-27',
+    description: 'Uber *Ride Midtown to Flatiron',
+    merchant: 'Uber',
+    amount: -28.4,
+    category: 'Transportation',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-06',
+    date: '2026-10-25',
+    description: 'Equinox Club Dues Oct26',
+    merchant: 'Equinox Fitness',
+    amount: -260.0,
+    category: 'Health & Wellness',
+    spendingType: 'discretionary',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-07',
+    date: '2026-10-24',
+    description: 'Trader Joe’s Market Grocery',
+    merchant: 'Trader Joe’s',
+    amount: -86.2,
+    category: 'Food & Dining',
+    spendingType: 'essential',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-08',
+    date: '2026-10-22',
+    description: 'Honda Financial Services Auto Loan',
+    merchant: 'Honda Auto Loan',
+    amount: -290.0,
+    category: 'Debt & Loans',
+    spendingType: 'essential',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-09',
+    date: '2026-10-20',
+    description: 'Apple Services - Apple Music',
+    merchant: 'Apple Services',
+    amount: -10.99,
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-10',
+    date: '2026-10-18',
+    description: 'Spotify USA Monthly Duo',
+    merchant: 'Spotify USA',
+    amount: -16.99,
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-11',
+    date: '2026-10-16',
+    description: 'Blue Bottle Coffee Roasters',
+    merchant: 'Blue Bottle Coffee',
+    amount: -6.75,
+    category: 'Food & Dining',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-12',
+    date: '2026-10-15',
+    description: 'SoFi Refinance Student Loan Pmt',
+    merchant: 'SoFi Student Loan',
+    amount: -320.0,
+    category: 'Debt & Loans',
+    spendingType: 'essential',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-13',
+    date: '2026-10-15',
+    description: 'Bi-Weekly Tech Corp Direct Deposit',
+    merchant: 'TechCorp Global Payroll',
+    amount: 3100.0,
+    category: 'Income',
+    spendingType: 'income',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'biweekly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-14',
+    date: '2026-10-14',
+    description: 'OpenAI ChatGPT Plus Subscription',
+    merchant: 'OpenAI',
+    amount: -20.0,
+    category: 'Education & Growth',
+    spendingType: 'essential',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-15',
+    date: '2026-10-12',
+    description: 'Patagonia Outdoor Apparel Coat',
+    merchant: 'Patagonia',
+    amount: -189.0,
+    category: 'Shopping & Personal',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-16',
+    date: '2026-10-10',
+    description: 'Consulting Advisory Wire Client Acct',
+    merchant: 'Apex Studios Advisory',
+    amount: 950.0,
+    category: 'Income',
+    spendingType: 'income',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-17',
+    date: '2026-10-08',
+    description: 'Netflix Monthly Premium 4K (Price Raised)',
+    merchant: 'Netflix Inc',
+    amount: -22.99,
+    category: 'Entertainment & Subscriptions',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-18',
+    date: '2026-10-03',
+    description: 'Amazon Web Services Cloud Charge',
+    merchant: 'Amazon Web Services',
+    amount: -44.5,
+    category: 'Utilities & Bills',
+    spendingType: 'essential',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-19',
+    date: '2026-10-02',
+    description: 'MTA NYC Subway 30-Day Unlimited',
+    merchant: 'MTA Subway',
+    amount: -132.0,
+    category: 'Transportation',
+    spendingType: 'essential',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-20',
+    date: '2026-10-01',
+    description: 'Avalon Bay Lease Rent Direct Debit',
+    merchant: 'Avalon Bay Communities',
+    amount: -2150.0,
+    category: 'Housing & Rent',
+    spendingType: 'essential',
+    accountName: 'Primary Checking ···4921',
+    isRecurring: true,
+    recurringFrequency: 'monthly',
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-21',
+    date: '2026-09-28',
+    description: 'Coursera Professional Certification',
+    merchant: 'Coursera',
+    amount: -49.0,
+    category: 'Education & Growth',
+    spendingType: 'essential',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+  {
+    id: 'tx-22',
+    date: '2026-09-25',
+    description: 'Local Italian Trattoria Dinner with Friends',
+    merchant: 'Via Carota Trattoria',
+    amount: -112.5,
+    category: 'Food & Dining',
+    spendingType: 'discretionary',
+    accountName: 'Preferred Sapphire ···3320',
+    isRecurring: false,
+    source: 'demo',
+    status: 'cleared',
+  },
+];
+
+export const INITIAL_NUDGES: NudgeAlert[] = [
+  {
+    id: 'nudge-1',
+    type: 'subscription_hike',
+    severity: 'warning',
+    title: 'Subscription Price Increase Detected',
+    message: 'Netflix increased your monthly charge from $19.99 to $22.99 (+15%). Adds $36/year to recurring commitments.',
+    impactAmount: 36,
+    actionLabel: 'Review Subscription',
+    actionType: 'NAVIGATE_SUBSCRIPTIONS',
+    date: '2026-10-08',
+    dismissed: false,
+  },
+  {
+    id: 'nudge-2',
+    type: 'unused_sub',
+    severity: 'warning',
+    title: 'Potential Unused Subscription Flagged',
+    message: 'Equinox Gym ($260/mo) shows 0 activity check-ins in the past 45 days. Would you like to keep or pause it?',
+    impactAmount: 260,
+    actionLabel: 'Check Usage',
+    actionType: 'MANAGE_SUBSCRIPTION_EQUINOX',
+    date: '2026-10-25',
+    dismissed: false,
+  },
+  {
+    id: 'nudge-3',
+    type: 'unused_sub',
+    severity: 'info',
+    title: 'Redundant Audio Subscriptions',
+    message: 'You have active plans for both Spotify Duo ($16.99) and Apple Music ($10.99). Consolidating could save up to $203/yr.',
+    impactAmount: 131.88,
+    actionLabel: 'Compare Plans',
+    actionType: 'NAVIGATE_SUBSCRIPTIONS',
+    date: '2026-10-20',
+    dismissed: false,
+  },
+  {
+    id: 'nudge-4',
+    type: 'drift_warning',
+    severity: 'warning',
+    title: 'Dining Out Discretionary Drift',
+    message: 'Discretionary food & cafes reached $363 vs your planned $350 pace with 1 day remaining.',
+    impactAmount: 13,
+    actionLabel: 'View Breakdown',
+    actionType: 'NAVIGATE_TRANSACTIONS_FOOD',
+    date: '2026-10-30',
+    dismissed: false,
+  },
+];
+
+export function calculateDeterministicMetrics(
+  profile: LivingMoneyModel,
+  transactions: Transaction[],
+  recurring: RecurringCommitment[]
+): CalculatedFinancialMetrics {
+  const currentMonthPrefix = '2026-10';
+  const monthTx = transactions.filter((tx) => tx.date.startsWith(currentMonthPrefix));
+
+  const actualIncomeTx = monthTx.filter((tx) => tx.amount > 0);
+  const totalIncome =
+    actualIncomeTx.length > 0
+      ? actualIncomeTx.reduce((sum, tx) => sum + tx.amount, 0)
+      : profile.monthlyNetIncome;
+
+  const expenseTx = monthTx.filter((tx) => tx.amount < 0);
+  const totalExpenses = Math.abs(expenseTx.reduce((sum, tx) => sum + tx.amount, 0));
+
+  const essentialTx = expenseTx.filter((tx) => tx.spendingType === 'essential');
+  const discretionaryTx = expenseTx.filter((tx) => tx.spendingType === 'discretionary');
+
+  const essentialSpending = Math.abs(essentialTx.reduce((sum, tx) => sum + tx.amount, 0));
+  const discretionarySpending = Math.abs(discretionaryTx.reduce((sum, tx) => sum + tx.amount, 0));
+
+  const activeRecurring = recurring.filter((r) => r.status !== 'cancelled');
+  const recurringMonthly = activeRecurring.reduce((sum, r) => {
+    if (r.frequency === 'annual') return sum + r.amount / 12;
+    if (r.frequency === 'quarterly') return sum + r.amount / 3;
+    return sum + r.amount;
+  }, 0);
+
+  const debtMonthly = profile.debtCommitments.reduce((sum, d) => sum + d.monthlyPayment, 0);
+  const committedFixedObligations = recurringMonthly + debtMonthly;
+
+  const netMonthlyCashFlow = totalIncome - totalExpenses;
+
+  const totalPlannedSavings = profile.savingsGoals.reduce((sum, g) => sum + (g.monthlyTarget || 0), 0);
+  const remainingDiscretionaryBudget = Math.max(
+    0,
+    totalIncome - committedFixedObligations - totalPlannedSavings - discretionarySpending
+  );
+  const safeToSpendPerDay = Math.round((remainingDiscretionaryBudget / 1) * 10) / 10;
+
+  const effectiveSavingsRate =
+    totalIncome > 0 ? Math.round(((totalIncome - totalExpenses) / totalIncome) * 1000) / 10 : 0;
+
+  const monthlyEssentialBaseline = Math.max(essentialSpending, committedFixedObligations * 0.9);
+  const emergencyFundCalculatedTarget = Math.round(monthlyEssentialBaseline * profile.emergencyFund.targetMonths);
+  const runwayMonths =
+    monthlyEssentialBaseline > 0
+      ? Math.round((profile.emergencyFund.currentBalance / monthlyEssentialBaseline) * 10) / 10
+      : 0;
+
+  const emergencyFundPts = Math.min(30, (runwayMonths / profile.emergencyFund.targetMonths) * 30);
+  const savingsPts = Math.min(25, (effectiveSavingsRate / profile.guardrails.savingsTargetPercent) * 25);
+  const debtRatio = totalIncome > 0 ? committedFixedObligations / totalIncome : 0.5;
+  const debtPts = Math.max(0, Math.min(25, 25 - (debtRatio - 0.3) * 50));
+  const discretionaryRatio = totalIncome > 0 ? (discretionarySpending / totalIncome) * 100 : 30;
+  const discPts =
+    discretionaryRatio <= profile.guardrails.discretionaryLimitPercent
+      ? 20
+      : Math.max(0, 20 - (discretionaryRatio - profile.guardrails.discretionaryLimitPercent) * 2);
+
+  const financialHealthScore = Math.min(100, Math.max(10, Math.round(emergencyFundPts + savingsPts + debtPts + discPts)));
+
+  const essentialPercentOfIncome =
+    totalIncome > 0 ? Math.round((essentialSpending / totalIncome) * 1000) / 10 : 0;
+  const discretionaryPercentOfIncome =
+    totalIncome > 0 ? Math.round((discretionarySpending / totalIncome) * 1000) / 10 : 0;
+
+  return {
+    totalMonthlyIncome: Math.round(totalIncome * 100) / 100,
+    totalMonthlyExpenses: Math.round(totalExpenses * 100) / 100,
+    essentialSpending: Math.round(essentialSpending * 100) / 100,
+    discretionarySpending: Math.round(discretionarySpending * 100) / 100,
+    committedFixedObligations: Math.round(committedFixedObligations * 100) / 100,
+    netMonthlyCashFlow: Math.round(netMonthlyCashFlow * 100) / 100,
+    safeToSpendPerDay,
+    effectiveSavingsRate,
+    emergencyFundCalculatedTarget,
+    runwayMonths,
+    financialHealthScore,
+    essentialPercentOfIncome,
+    discretionaryPercentOfIncome,
+  };
+}
+
+export function getInitialFinancialState(): FinancialState {
+  const metrics = calculateDeterministicMetrics(INITIAL_PROFILE, INITIAL_TRANSACTIONS, INITIAL_RECURRING);
+  return {
+    profile: INITIAL_PROFILE,
+    transactions: INITIAL_TRANSACTIONS,
+    recurring: INITIAL_RECURRING,
+    rules: INITIAL_RULES,
+    nudges: INITIAL_NUDGES,
+    metrics,
+    lastUpdated: new Date().toISOString(),
+  };
+}

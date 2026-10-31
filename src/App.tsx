@@ -8,6 +8,12 @@ import {
   LivingMoneyModel,
   NudgeAlert,
 } from './types/finance.js';
+import {
+  loadStoredFinancialState,
+  saveStoredFinancialState,
+  calculateFinancialMetrics,
+  getInitialFinancialState,
+} from './utils/financeEngine.js';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
 import { OverviewView } from './components/OverviewView.js';
@@ -21,11 +27,11 @@ import { CategoryCorrectionModal } from './components/CategoryCorrectionModal.js
 import { IngestionModal } from './components/IngestionModal.js';
 import { RulesManagerModal } from './components/RulesManagerModal.js';
 import confetti from 'canvas-confetti';
-import { CheckCircle2, AlertCircle, Info, Sparkles } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 export default function App() {
-  const [data, setData] = useState<FinancialState | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Always initialize with stored or pristine default financial state so the page NEVER gets stuck loading
+  const [data, setData] = useState<FinancialState>(() => loadStoredFinancialState());
   const [activeTab, setActiveTab] = useState<string>('overview');
 
   // Modals state
@@ -40,21 +46,23 @@ export default function App() {
 
   const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3500);
+    setTimeout(() => setToast(null), 3000);
   };
 
-  // Fetch initial financial state
+  // Sync with server if available in background
   const fetchFinancialState = async () => {
     try {
       const res = await fetch('/api/data');
       if (res.ok) {
         const json = await res.json();
-        setData(json);
+        if (json && json.profile && json.transactions) {
+          setData(json);
+          saveStoredFinancialState(json);
+        }
       }
     } catch (err) {
-      console.error('Failed to load financial state:', err);
-    } finally {
-      setIsLoading(false);
+      // In offline / serverless environments, local state remains fully active
+      console.warn('Backend server unreachable, running in local-first mode:', err);
     }
   };
 
@@ -64,28 +72,25 @@ export default function App() {
 
   // Currency change handler
   const handleCurrencyChange = async (newCurrency: CurrencyCode) => {
-    if (!data) return;
+    const updatedProfile = { ...data.profile, currency: newCurrency };
+    const updatedMetrics = calculateFinancialMetrics(updatedProfile, data.transactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      profile: updatedProfile,
+      metrics: updatedMetrics,
+    };
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast(`Currency changed to ${newCurrency}`);
+
     try {
-      const res = await fetch('/api/profile', {
+      await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currency: newCurrency }),
       });
-      const resData = await res.json();
-      if (resData.success) {
-        setData((prev) =>
-          prev
-            ? {
-                ...prev,
-                profile: resData.profile,
-                metrics: resData.metrics,
-              }
-            : null
-        );
-        showToast(`Display currency changed to ${newCurrency}`);
-      }
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync currency with server:', err);
     }
   };
 
@@ -96,8 +101,67 @@ export default function App() {
     newSpendingType: SpendingType,
     createLearningRule: boolean
   ) => {
+    const targetTx = data.transactions.find((t) => t.id === txId);
+    if (!targetTx) return;
+
+    let updatedRules = [...data.rules];
+    if (createLearningRule && targetTx.merchant) {
+      const existingRuleIdx = updatedRules.findIndex(
+        (r) => r.pattern.toLowerCase() === targetTx.merchant.toLowerCase()
+      );
+      if (existingRuleIdx >= 0) {
+        updatedRules[existingRuleIdx] = {
+          ...updatedRules[existingRuleIdx],
+          targetCategory: newCategory,
+          targetSpendingType: newSpendingType,
+        };
+      } else {
+        updatedRules.unshift({
+          id: `rule-${Date.now()}`,
+          pattern: targetTx.merchant,
+          matchField: 'merchant',
+          targetCategory: newCategory,
+          targetSpendingType: newSpendingType,
+          createdAt: new Date().toISOString(),
+          timesApplied: 1,
+          isUserDefined: true,
+        });
+      }
+    }
+
+    // Apply rule to existing transactions
+    const updatedTransactions = data.transactions.map((t) => {
+      if (t.id === txId || (createLearningRule && t.merchant.toLowerCase() === targetTx.merchant.toLowerCase())) {
+        return {
+          ...t,
+          category: newCategory,
+          spendingType: newSpendingType,
+        };
+      }
+      return t;
+    });
+
+    const updatedMetrics = calculateFinancialMetrics(data.profile, updatedTransactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      rules: updatedRules,
+      transactions: updatedTransactions,
+      metrics: updatedMetrics,
+    };
+
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+
+    if (createLearningRule) {
+      confetti({ particleCount: 35, spread: 45, origin: { y: 0.8 } });
+      showToast('Preference learned! Matching transactions updated.');
+    } else {
+      showToast('Transaction category updated.');
+    }
+
+    // Background sync
     try {
-      const res = await fetch(`/api/transactions/${txId}`, {
+      await fetch(`/api/transactions/${txId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -105,78 +169,90 @@ export default function App() {
           createLearningRule,
         }),
       });
-      const resData = await res.json();
-      if (resData.success) {
-        // Refresh state
-        await fetchFinancialState();
-        if (createLearningRule) {
-          confetti({ particleCount: 40, spread: 50, origin: { y: 0.8 } });
-          showToast(`Rule learned! Category updated across matching transactions.`);
-        } else {
-          showToast(`Transaction category updated.`);
-        }
-      }
     } catch (err) {
-      console.error(err);
-      showToast('Failed to update category', 'error');
+      console.warn('Could not sync category correction with server:', err);
     }
   };
 
   // Delete transaction
   const handleDeleteTransaction = async (id: string) => {
+    const updatedTransactions = data.transactions.filter((t) => t.id !== id);
+    const updatedMetrics = calculateFinancialMetrics(data.profile, updatedTransactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      transactions: updatedTransactions,
+      metrics: updatedMetrics,
+    };
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast('Transaction removed.');
+
     try {
-      const res = await fetch(`/api/transactions/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchFinancialState();
-        showToast('Transaction removed.');
-      }
+      await fetch(`/api/transactions/${id}`, { method: 'DELETE' });
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync transaction deletion with server:', err);
     }
   };
 
   // Import batch transactions
   const handleCommitImport = async (
-    transactions: Array<Omit<Transaction, 'id'>>,
+    newTxs: Array<Omit<Transaction, 'id'>>,
     source: Transaction['source']
   ) => {
+    const createdItems: Transaction[] = newTxs.map((t, idx) => ({
+      id: `tx-imp-${Date.now()}-${idx}`,
+      ...t,
+      source,
+      status: 'cleared',
+    }));
+
+    const updatedTransactions = [...createdItems, ...data.transactions];
+    const updatedMetrics = calculateFinancialMetrics(data.profile, updatedTransactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      transactions: updatedTransactions,
+      metrics: updatedMetrics,
+    };
+
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    confetti({ particleCount: 60, spread: 55, origin: { y: 0.7 } });
+    showToast(`Successfully ingested ${createdItems.length} transactions.`);
+
     try {
-      const res = await fetch('/api/transactions/import', {
+      await fetch('/api/transactions/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transactions, source }),
+        body: JSON.stringify({ transactions: newTxs, source }),
       });
-      const resData = await res.json();
-      if (resData.success) {
-        await fetchFinancialState();
-        confetti({ particleCount: 70, spread: 60, origin: { y: 0.7 } });
-        showToast(
-          `Successfully ingested ${resData.imported} transactions (${resData.duplicatesDetected} duplicates filtered).`
-        );
-      }
     } catch (err) {
-      console.error(err);
-      showToast('Failed to import transactions.', 'error');
+      console.warn('Could not sync imported transactions with server:', err);
     }
   };
 
   // Update Living Money Model Profile
   const handleUpdateProfile = async (updates: Partial<LivingMoneyModel>) => {
+    const updatedProfile = { ...data.profile, ...updates };
+    const updatedMetrics = calculateFinancialMetrics(updatedProfile, data.transactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      profile: updatedProfile,
+      metrics: updatedMetrics,
+    };
+
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    confetti({ particleCount: 25, spread: 40, origin: { y: 0.6 } });
+    showToast('Living Money Model updated!');
+
     try {
-      const res = await fetch('/api/profile', {
+      await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      const resData = await res.json();
-      if (resData.success) {
-        await fetchFinancialState();
-        confetti({ particleCount: 30, spread: 40, origin: { y: 0.6 } });
-        showToast('Living Money Model recalibrated!');
-      }
     } catch (err) {
-      console.error(err);
-      showToast('Failed to save profile.', 'error');
+      console.warn('Could not sync profile with server:', err);
     }
   };
 
@@ -185,52 +261,70 @@ export default function App() {
     id: string,
     action: 'confirm_active' | 'mark_cancelled' | 'dismiss_alert'
   ) => {
+    const updatedRecurring = data.recurring.map((r) => {
+      if (r.id === id) {
+        return {
+          ...r,
+          status:
+            action === 'confirm_active'
+              ? ('confirmed_active' as const)
+              : action === 'mark_cancelled'
+              ? ('cancelled' as const)
+              : ('active' as const),
+        };
+      }
+      return r;
+    });
+
+    const updatedMetrics = calculateFinancialMetrics(data.profile, data.transactions, updatedRecurring);
+    const updatedState: FinancialState = {
+      ...data,
+      recurring: updatedRecurring,
+      metrics: updatedMetrics,
+    };
+
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast(
+      action === 'confirm_active'
+        ? 'Subscription confirmed active.'
+        : action === 'mark_cancelled'
+        ? 'Subscription marked cancelled. Cashflow updated.'
+        : 'Alert acknowledged.'
+    );
+
     try {
-      const res = await fetch(`/api/recurring/${id}/action`, {
+      await fetch(`/api/recurring/${id}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       });
-      if (res.ok) {
-        await fetchFinancialState();
-        showToast(
-          action === 'confirm_active'
-            ? 'Subscription confirmed active.'
-            : action === 'mark_cancelled'
-            ? 'Subscription marked cancelled. Cashflow updated.'
-            : 'Alert acknowledged.'
-        );
-      }
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync recurring action with server:', err);
     }
   };
 
   // Dismiss Nudge Alert
   const handleDismissNudge = async (id: string) => {
+    const updatedNudges = data.nudges.filter((n) => n.id !== id);
+    const updatedState: FinancialState = {
+      ...data,
+      nudges: updatedNudges,
+    };
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast('Insight dismissed.');
+
     try {
-      const res = await fetch(`/api/nudges/${id}/dismiss`, { method: 'POST' });
-      if (res.ok) {
-        setData((prev) =>
-          prev
-            ? {
-                ...prev,
-                nudges: prev.nudges.filter((n) => n.id !== id),
-              }
-            : null
-        );
-        showToast('Nudge dismissed.');
-      }
+      await fetch(`/api/nudges/${id}/dismiss`, { method: 'POST' });
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync dismiss with server:', err);
     }
   };
 
   // Handle Nudge Action
   const handleNudgeAction = (nudge: NudgeAlert) => {
-    if (nudge.actionType === 'NAVIGATE_SUBSCRIPTIONS') {
-      setActiveTab('subscriptions');
-    } else if (nudge.actionType === 'MANAGE_SUBSCRIPTION_EQUINOX') {
+    if (nudge.actionType === 'NAVIGATE_SUBSCRIPTIONS' || nudge.actionType === 'MANAGE_SUBSCRIPTION_EQUINOX') {
       setActiveTab('subscriptions');
     } else if (nudge.actionType === 'NAVIGATE_TRANSACTIONS_FOOD') {
       setActiveTab('transactions');
@@ -243,65 +337,88 @@ export default function App() {
   const handleAddRule = async (
     rule: Omit<CategorizationRule, 'id' | 'createdAt' | 'timesApplied'>
   ) => {
+    const newRule: CategorizationRule = {
+      id: `rule-${Date.now()}`,
+      ...rule,
+      createdAt: new Date().toISOString(),
+      timesApplied: 0,
+    };
+
+    const updatedTransactions = data.transactions.map((tx) => {
+      const matchText = rule.matchField === 'merchant' ? tx.merchant.toLowerCase() : tx.description.toLowerCase();
+      if (matchText.includes(rule.pattern.toLowerCase())) {
+        newRule.timesApplied++;
+        return {
+          ...tx,
+          category: rule.targetCategory,
+          spendingType: rule.targetSpendingType,
+        };
+      }
+      return tx;
+    });
+
+    const updatedRules = [newRule, ...data.rules];
+    const updatedMetrics = calculateFinancialMetrics(data.profile, updatedTransactions, data.recurring);
+    const updatedState: FinancialState = {
+      ...data,
+      rules: updatedRules,
+      transactions: updatedTransactions,
+      metrics: updatedMetrics,
+    };
+
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast('Categorization rule saved and applied.');
+
     try {
-      const res = await fetch('/api/rules', {
+      await fetch('/api/rules', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(rule),
       });
-      if (res.ok) {
-        await fetchFinancialState();
-        showToast('New learned rule applied to existing transactions.');
-      }
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync rule with server:', err);
     }
   };
 
   // Delete Rule
   const handleDeleteRule = async (id: string) => {
+    const updatedRules = data.rules.filter((r) => r.id !== id);
+    const updatedState: FinancialState = {
+      ...data,
+      rules: updatedRules,
+    };
+    setData(updatedState);
+    saveStoredFinancialState(updatedState);
+    showToast('Rule deleted.');
+
     try {
-      const res = await fetch(`/api/rules/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        await fetchFinancialState();
-        showToast('Categorization rule deleted.');
-      }
+      await fetch(`/api/rules/${id}`, { method: 'DELETE' });
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync rule deletion with server:', err);
     }
   };
 
   // Reset to Pristine Demo
   const handleResetData = async () => {
-    if (!confirm('Reset all financial data to pristine demo state?')) return;
+    if (!confirm('Reset all financial data to pristine default state?')) return;
+    const pristine = getInitialFinancialState();
+    setData(pristine);
+    saveStoredFinancialState(pristine);
+    showToast('Default financial state restored.');
+
     try {
-      const res = await fetch('/api/reset-data', { method: 'POST' });
-      if (res.ok) {
-        const json = await res.json();
-        setData(json.state);
-        showToast('Demo data restored.');
-      }
+      await fetch('/api/reset-data', { method: 'POST' });
     } catch (err) {
-      console.error(err);
+      console.warn('Could not sync reset with server:', err);
     }
   };
-
-  if (isLoading || !data) {
-    return (
-      <div className="min-h-screen bg-[#F8F9F7] flex flex-col items-center justify-center text-[#777F79] gap-3">
-        <div className="w-8 h-8 rounded-md bg-[#237A57] flex items-center justify-center text-white font-bold text-sm animate-pulse">
-          F
-        </div>
-        <div className="text-xs font-medium tracking-wide text-[#202521]">Loading Finmate Ledger...</div>
-      </div>
-    );
-  }
 
   const unresolvedNudgeCount = data.nudges.filter((n) => !n.dismissed).length;
 
   return (
     <div className="min-h-screen bg-[#F8F9F7] text-[#202521] flex flex-col antialiased">
-      {/* Top 3-Zone Bar */}
+      {/* Top Bar */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}

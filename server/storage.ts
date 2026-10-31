@@ -10,8 +10,10 @@ import {
   CalculatedFinancialMetrics,
 } from '../src/types/finance.js';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const DATA_DIR = IS_VERCEL ? '/tmp/finmate' : path.resolve(process.cwd(), 'data');
 const DATA_FILE = path.join(DATA_DIR, 'finmate_data.json');
+const SEED_DATA_FILE = path.join(process.cwd(), 'data', 'finmate_data.json');
 
 const INITIAL_PROFILE: LivingMoneyModel = {
   currency: 'USD',
@@ -659,6 +661,10 @@ export class FinanceStorage {
         const raw = fs.readFileSync(DATA_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
         return parsed;
+      } else if (fs.existsSync(SEED_DATA_FILE)) {
+        const raw = fs.readFileSync(SEED_DATA_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        return parsed;
       }
     } catch (err) {
       console.warn('Could not read existing finance storage, using initial seed data.', err);
@@ -699,7 +705,7 @@ export class FinanceStorage {
       }
       fs.writeFileSync(DATA_FILE, JSON.stringify(state, null, 2), 'utf-8');
     } catch (err) {
-      console.error('Failed to save finance storage to disk:', err);
+      console.warn('Note: Could not write file to disk (in-memory state active):', err);
     }
   }
 
