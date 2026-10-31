@@ -1,0 +1,6 @@
+{
+  "name": "FINMATE AI — Personal Finance Coach & Living Money Model",
+  "description": "An AI-powered personal finance intelligence platform featuring the Living Money Model, adaptive categorization, recurring payment detection, scenario simulator, and conversational coaching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
